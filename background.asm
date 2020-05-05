@@ -5,8 +5,55 @@
 .segment "Code"
 .org $C000 
 
+;;;;;;;;;;;;;;  
+
+.segment "ROData"
+.org $E000
+palette:
+    .byte $22,$29,$1a,$0f,  $22,$36,$17,$0f,  $22,$30,$21,$0f,  $22,$27,$17,$0f   ;;background palette
+    .byte $0F,$2C,$25,$24,  $0F,$02,$38,$3C,  $0F,$1C,$15,$14,  $0F,$02,$38,$3C   ;;sprite palette
+end_palette:
+    s_palette = (end_palette - palette)
+
+rosprites:
+    ;vert tile attr horiz
+    .byte $80, $32, $00, $80   ;sprite 0
+    .byte $80, $33, $00, $88   ;sprite 1
+    .byte $88, $34, $00, $80   ;sprite 2
+    .byte $88, $35, $00, $88   ;sprite 3
+end_rosprites:
+    s_rosprites = (end_rosprites - rosprites)
+
+background:
+
+    .storage $20, $24  ;;row 1, all sky -- This row is discarded
+
+    .byte $24, $f4, $f6, $f6, $f6, $f6, $f6, $f6, $f6, $f6, $f7, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24
+    .byte $24, $f8, $1c, $1e, $19, $24, $1d, $12, $16, $2b, $f8, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24
+    .byte $24, $f8, $24, $24, $24, $24, $24, $24, $24, $24, $f8, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24  
+    .byte $24, $f8, $24, $24, $24, $24, $24, $24, $fd, $fe, $f8, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24
+    .byte $24, $f8, $24, $24, $24, $24, $24, $24, $24, $24, $f8, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24
+    .byte $24, $f5, $f6, $f6, $f6, $f6, $f6, $f6, $f6, $f6, $f9, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24, $24
+
+    .storage $20, $24
+
+end_background:
+    s_background = $FF//(end_background - background)
+
+attribute:
+    .byte %00000000, %00010000, %01010000, %00010000, %00000000, %00000000, %00000000, %00110000
+end_attribute:
+    s_attribute = (end_attribute - attribute)
+
+;;;;;;;;;;;;;;  
+
 .function IRQ
     RTI
+.endfunction
+
+.function VBLANKWAIT
+    BIT PPUSTATUS
+    BPL VBLANKWAIT
 .endfunction
 
 .function RESET
@@ -21,9 +68,7 @@
     STX PPUMASK  ; disable rendering
     STX DPMCIRQ  ; disable DMC IRQs
 
-vblankwait1:       ; First wait for vblank to make sure PPU is ready
-    BIT PPUSTATUS
-    BPL vblankwait1
+    VBLANKWAIT()
 
 clrmem:
     LDA #$00
@@ -39,12 +84,7 @@ clrmem:
     INX
     BNE clrmem
    
-vblankwait2:      ; Second wait for vblank, PPU is ready after this
-    BIT PPUSTATUS
-    BPL vblankwait2
-
-    LDA #%00011110   ;intensify blues
-    STA PPUMASK
+    VBLANKWAIT()      ; Second wait for vblank, PPU is ready after this
 
 loadpalettes:
     LDA PPUSTATUS         ; read ppu status to reset the high/low latch
@@ -55,15 +95,10 @@ loadpalettes:
     LDX #$00              ; start out at 0
 loadpalettesloop:
     LDA palette, x        ; load data from address (palette + the value in x)
-                          ; 1st time through loop it will load palette+0
-                          ; 2nd time through loop it will load palette+1
-                          ; 3rd time through loop it will load palette+2
-                          ; etc
     STA PPUDATA           ; write to ppu
     INX                   ; x = x + 1
-    CPX #s_palette        ; compare x to hex $10, decimal 16 - copying 16 bytes = 4 sprites
-    BNE loadpalettesloop  ; branch to loadpalettesloop if compare was not equal to zero
-                          ; if compare was equal to 32, keep going down
+    CPX #s_palette        ; compare x to palette size
+    BNE loadpalettesloop  ; repeat until all bytes loaded
 
 loadbackground:
     LDA PPUSTATUS         ; read ppu status to reset the high/low latch
@@ -76,9 +111,8 @@ loadbackgroundloop:
     LDA background, x     ; load data from address (background + the value in x)
     STA PPUDATA           ; write to ppu
     INX                   ; x = x + 1
-    CPX #s_background     ; compare x to hex $80, decimal 128 - copying 128 bytes
-    BNE loadbackgroundloop; branch to loadbackgroundloop if compare was not equal to zero
-                          ; if compare was equal to 128, keep going down
+    CPX #s_background     ; compare x to background size
+    BNE loadbackgroundloop; repeat until all bytes copied
               
 loadattribute:
     LDA PPUSTATUS         ; read ppu status to reset the high/low latch
@@ -101,6 +135,10 @@ loadattributeloop:
     LDA #%00011110   ; enable sprites, enable background, no clipping on left side
     STA PPUMASK
 
+    LDA #$00        ;;tell the ppu there is no background scrolling
+    STA PPUSCROLL
+    sta PPUSCROLL
+
 forever:
     JMP forever     ;jump back to forever, infinite loop
 .endfunction
@@ -111,53 +149,16 @@ forever:
     LDA #$02
     STA OAMDMA       ; set the high byte (02) of the ram address, start the transfer
 
+    LDA #%10010000   ; enable nmi, sprites from pattern table 0, background from pattern table 1
+    STA PPUCTRL
+    LDA #%00011110   ; enable sprites, enable background, no clipping on left side
+    STA PPUMASK
+    LDA #$00        ;;tell the ppu there is no background scrolling
+    STA PPUSCROLL
+    STA PPUSCROLL
+
     RTI
 .endfunction
-
-;;;;;;;;;;;;;;  
-
-.segment "ROData"
-.org $E000
-palette:
-    .byte $22,$29,$1a,$0f,  $22,$36,$17,$0f,  $22,$30,$21,$0f,  $22,$27,$17,$0f   ;;background palette
-    .byte $22,$1c,$15,$14,  $22,$02,$38,$3c,  $22,$1c,$15,$14,  $22,$02,$38,$3c   ;;sprite palette
-end_palette:
-    s_palette = (end_palette - palette)
-
-rosprites:
-    ;vert tile attr horiz
-    .byte $80, $32, $00, $80   ;sprite 0
-    .byte $80, $33, $00, $88   ;sprite 1
-    .byte $88, $34, $00, $80   ;sprite 2
-    .byte $88, $35, $00, $88   ;sprite 3
-end_rosprites:
-    s_rosprites = (end_rosprites - rosprites)
-
-background:
-    sky = $24
-    bricktop = $45
-    brickbottom = $47
-    qblock = $53
-    .storage $20, sky  ;;row 1, all sky
-    .storage $20, sky  ;;row 2, all sky
-
-    .byte sky,sky,sky,sky,bricktop,bricktop,sky,sky
-    .byte bricktop,bricktop,bricktop,bricktop,bricktop,bricktop,sky,sky  ;;row 3
-    .byte sky,sky,sky,sky,sky,sky,sky,sky
-    .byte sky,sky,sky,sky,qblock,qblock+1,sky,sky  ;;some brick tops
-    
-    .byte sky,sky,sky,sky,brickbottom,brickbottom,sky,sky
-    .byte brickbottom,brickbottom,brickbottom,brickbottom,brickbottom,brickbottom,sky,sky  ;;row 4
-    .byte sky,sky,sky,sky,sky,sky,sky,sky
-    .byte sky,sky,sky,sky,qblock+2,qblock+3,sky,sky  ;;brick bottoms
-
-end_background:
-    s_background = (end_background - background)
-
-attribute:
-    .byte %00000000, %00010000, %01010000, %00010000, %00000000, %00000000, %00000000, %00110000
-end_attribute:
-    s_attribute = (end_attribute - attribute)
 
 ;;;;;;;;;;;;;;  
   
